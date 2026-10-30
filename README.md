@@ -1,4 +1,4 @@
-# TalkThru
+# talk2
 
 Talk to Claude while wearing your Steam Frame. Say **"Hey Jarvis"**, ask your question, and hear the answer in a natural voice, without taking the headset off or leaving your game.
 
@@ -21,7 +21,7 @@ Listen to the voices: [docs/voice-samples.mp3](docs/voice-samples.mp3) (Heart, B
 
 3. When asked, sign in to Claude in the browser window that opens.
 
-That's it. It takes a few minutes and about 700 MB, everything stays in your home folder, and TalkThru starts on its own from then on. Run the same command again to update.
+That's it. It takes a few minutes and about 700 MB, everything stays in your home folder, and talk2 starts on its own from then on. Run the same command again to update.
 
 ## Using it
 
@@ -36,20 +36,20 @@ That's it. It takes a few minutes and about 700 MB, everything stays in your hom
 
 A falling chime means it heard you and is thinking. A low chime means it didn't catch anything.
 
-Claude can search the web and read files on the headset. Running commands or changing files is off by default, since a misheard word shouldn't run anything; turn it on with `talkthru set allow_commands true`.
+Claude can search the web and read files on the headset. Running commands or changing files is off by default, since a misheard word shouldn't run anything; turn it on with `talk2 set allow_commands true`.
 
 ## Settings
 
 ```sh
-talkthru demo-voices                 # hear the six best voices
-talkthru set voice am_michael        # pick one
-talkthru set voice_speed 1.15        # talk faster
-talkthru set claude_model haiku      # fastest replies (sonnet is the default)
-talkthru set wake_threshold 0.6      # if it wakes up by itself
-talkthru settings                    # everything else
+talk2 demo-voices                 # hear the six best voices
+talk2 set voice am_michael        # pick one
+talk2 set voice_speed 1.15        # talk faster
+talk2 set claude_model haiku      # fastest replies (sonnet is the default)
+talk2 set wake_threshold 0.6      # if it wakes up by itself
+talk2 settings                    # everything else
 ```
 
-`talkthru help` lists every command. Settings live in `~/.config/talkthru/settings.json`.
+`talk2 help` lists every command. Settings live in `~/.config/talk2/settings.json`.
 
 | Setting | Default | |
 |---|---|---|
@@ -66,10 +66,10 @@ talkthru settings                    # everything else
 
 ## Troubleshooting
 
-- **It doesn't wake up.** Run `talkthru mic-test` and say "Hey Jarvis". The level bar should move when you talk and the score should jump above 0.5. If the bar doesn't move, the Frame's mic isn't the default input; pick it in the sound settings.
-- **It wakes up by itself.** `talkthru set wake_threshold 0.65`.
-- **"Claude isn't signed in."** Run `talkthru login`.
-- **See what it's doing.** `talkthru log` shows what it heard, how long each step took, and any errors.
+- **It doesn't wake up.** Run `talk2 mic-test` and say "Hey Jarvis". The level bar should move when you talk and the score should jump above 0.5. If the bar doesn't move, the Frame's mic isn't the default input; pick it in the sound settings.
+- **It wakes up by itself.** `talk2 set wake_threshold 0.65`.
+- **"Claude isn't signed in."** Run `talk2 login`.
+- **See what it's doing.** `talk2 log` shows what it heard, how long each step took, and any errors.
 
 ## How it works
 
@@ -82,12 +82,12 @@ mic (PipeWire, 16 kHz) ─► wake word ─► record until you pause ─► Whi
 - **Speech recognition:** faster-whisper `base.en` (int8) on the CPU.
 - **Claude:** one long-lived `claude -p --input-format stream-json --output-format stream-json` process, so there's no start-up delay per question and the conversation keeps its context. Text streams back token by token; interrupts use Claude Code's control request.
 - **Voice:** Kokoro 82M (ONNX). The first clause is cut early so the voice starts fast, and each sentence is generated while the previous one plays.
-- **Service:** a systemd user service (`talkthru.service`), niced below your game.
+- **Service:** a systemd user service (`talk2.service`), niced below your game.
 
 ## Uninstall
 
 ```sh
-talkthru uninstall
+talk2 uninstall
 ```
 
 ## Credits

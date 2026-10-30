@@ -25,7 +25,7 @@ def _record_cmds(device):
     alsa_dev = ["-D", device] if device else []
     return [
         ["parecord", "--raw", "--format=s16le", f"--rate={MIC_RATE}", "--channels=1",
-         "--latency-msec=40", "--client-name=TalkThru", *pulse_dev],
+         "--latency-msec=40", "--client-name=talk2", *pulse_dev],
         ["pw-record", "--raw", "--rate", str(MIC_RATE), "--channels", "1",
          "--format", "s16", "--latency", "40ms", *pw_dev, "-"],
         ["arecord", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(MIC_RATE), "-c", "1", *alsa_dev],
@@ -38,7 +38,7 @@ def _play_cmds(rate, device):
     alsa_dev = ["-D", device] if device else []
     return [
         ["pacat", "--playback", "--raw", "--format=s16le", f"--rate={rate}", "--channels=1",
-         "--latency-msec=60", "--client-name=TalkThru", *pulse_dev],
+         "--latency-msec=60", "--client-name=talk2", *pulse_dev],
         ["pw-play", "--raw", "--rate", str(rate), "--channels", "1", "--format", "s16",
          "--latency", "60ms", *pw_dev, "-"],
         ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(rate), "-c", "1", *alsa_dev],

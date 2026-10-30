@@ -73,4 +73,4 @@ def load_voice(cfg, models_dir):
             return v
         except Exception as e:
             log(f"{engine} voice unavailable: {e}")
-    raise RuntimeError("No text-to-speech voice could be loaded. Run talkthru setup.")
+    raise RuntimeError("No text-to-speech voice could be loaded. Run talk2 update to reinstall.")

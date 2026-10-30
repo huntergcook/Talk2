@@ -1,15 +1,15 @@
 [Unit]
-Description=TalkThru voice assistant (Hey Jarvis -> Claude)
+Description=talk2 voice assistant (Hey Jarvis -> Claude)
 After=pipewire.service pipewire-pulse.service wireplumber.service
 Wants=pipewire-pulse.service
 
 [Service]
 Type=simple
 WorkingDirectory=%h
-Environment=PYTHONPATH=%h/.local/share/talkthru/app
+Environment=PYTHONPATH=%h/.local/share/talk2/app
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/share/talkthru/venv/bin/python -m talkthru run
+ExecStart=%h/.local/share/talk2/venv/bin/python -m talk2 run
 Restart=always
 RestartSec=2
 # Run below the game in CPU priority.

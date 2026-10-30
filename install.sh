@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# Installs TalkThru on the Steam Frame: a voice assistant that listens for
+# Installs talk2 on the Steam Frame: a voice assistant that listens for
 # "Hey Jarvis", sends what you say to Claude Code, and speaks the reply.
 #
 #   curl -fsSL https://raw.githubusercontent.com/huntergcook/talk2/main/install.sh | bash
 #
 # Everything goes in your home folder (SteamOS's system files stay untouched):
-#   ~/.local/share/talkthru   app, Python environment and models (~700 MB)
-#   ~/.config/talkthru        settings.json
-#   ~/.local/bin/talkthru     the `talkthru` command
-# Running it again updates TalkThru and keeps your settings.
+#   ~/.local/share/talk2   app, Python environment and models (~700 MB)
+#   ~/.config/talk2        settings.json
+#   ~/.local/bin/talk2     the `talk2` command
+# Running it again updates talk2 and keeps your settings.
 set -euo pipefail
 
-REPO="${TALKTHRU_REPO:-huntergcook/talk2}"
-REF="${TALKTHRU_REF:-main}"
-DATA="$HOME/.local/share/talkthru"
+REPO="${TALK2_REPO:-huntergcook/talk2}"
+REF="${TALK2_REF:-main}"
+DATA="$HOME/.local/share/talk2"
 APP="$DATA/app"
 VENV="$DATA/venv"
 MODELS="$DATA/models"
 BIN="$HOME/.local/bin"
 UNIT_DIR="$HOME/.config/systemd/user"
-DRY="${TALKTHRU_DRY_RUN:-}"   # set to 1 to test the script without downloading models
+DRY="${TALK2_DRY_RUN:-}"   # set to 1 to test the script without downloading models
 export PATH="$BIN:$PATH"
 
 say()  { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
@@ -27,21 +27,21 @@ warn() { printf '\033[1;33m!!\033[0m  %s\n' "$*"; }
 die()  { printf '\033[1;31mxx\033[0m  %s\n' "$*"; exit 1; }
 fetch() { curl -fL --retry 3 --progress-bar -o "$2.part" "$1" && mv "$2.part" "$2"; }
 
-[ "$(uname -s)" = Linux ] || die "TalkThru runs on the Steam Frame (Linux)."
+[ "$(uname -s)" = Linux ] || die "talk2 runs on the Steam Frame (Linux)."
 command -v curl >/dev/null || die "curl is missing."
 mkdir -p "$DATA" "$MODELS"/{wakeword,kokoro,whisper,piper} "$BIN" "$UNIT_DIR"
 
 # --- 1. App code ------------------------------------------------------------
-say "Downloading TalkThru ($REF)"
-if [ -n "${TALKTHRU_SRC:-}" ]; then          # local checkout, for development
-  SRC="$TALKTHRU_SRC"
+say "Downloading talk2 ($REF)"
+if [ -n "${TALK2_SRC:-}" ]; then          # local checkout, for development
+  SRC="$TALK2_SRC"
 else
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$REF" | tar -xz -C "$TMP"
   SRC="$(echo "$TMP"/*)"
 fi
 rm -rf "$APP.new"; mkdir -p "$APP.new"
-cp -r "$SRC/talkthru" "$SRC/talkthru.sh" "$SRC/talkthru.service" "$APP.new/"
+cp -r "$SRC/talk2" "$SRC/talk2.sh" "$SRC/talk2.service" "$APP.new/"
 rm -rf "$APP"; mv "$APP.new" "$APP"
 
 # --- 2. Python environment ----------------------------------------------------
@@ -69,7 +69,7 @@ for f in melspectrogram.onnx embedding_model.onnx hey_jarvis_v0.1.onnx; do
 done
 get "$KOK/kokoro-v1.0.onnx" "$MODELS/kokoro/kokoro-v1.0.onnx"
 get "$KOK/voices-v1.0.bin"  "$MODELS/kokoro/voices-v1.0.bin"
-SPEECH_MODEL="$(PYTHONPATH="$APP" "$VENV/bin/python" -c 'from talkthru import config; print(config.load()["speech_model"])')"
+SPEECH_MODEL="$(PYTHONPATH="$APP" "$VENV/bin/python" -c 'from talk2 import config; print(config.load()["speech_model"])')"
 if [ -z "$DRY" ]; then
   echo "  whisper $SPEECH_MODEL"
   PYTHONPATH="$APP" "$VENV/bin/python" -c "
@@ -81,15 +81,15 @@ fi
 if [ -z "$DRY" ]; then
   say "Testing the voice"
   if ! PYTHONPATH="$APP" "$VENV/bin/python" -c "
-from talkthru import config; from talkthru.tts import KokoroVoice; import time
+from talk2 import config; from talk2.tts import KokoroVoice; import time
 v = KokoroVoice('$MODELS/kokoro'); t = time.time(); a, sr = v.synth('Testing one two three, this is a short sentence.')
 print(f'  Kokoro made {len(a)/sr:.1f}s of speech in {time.time()-t:.2f}s')"; then
-    warn "Kokoro didn't run here, so TalkThru will use the Piper voice instead."
+    warn "Kokoro didn't run here, so talk2 will use the Piper voice instead."
     uv pip install --quiet --python "$VENV/bin/python" "piper-tts>=1.2"
     PV="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium"
     get "$PV/en_US-amy-medium.onnx" "$MODELS/piper/en_US-amy-medium.onnx"
     get "$PV/en_US-amy-medium.onnx.json" "$MODELS/piper/en_US-amy-medium.onnx.json"
-    PYTHONPATH="$APP" "$VENV/bin/python" -m talkthru set voice_engine piper >/dev/null
+    PYTHONPATH="$APP" "$VENV/bin/python" -m talk2 set voice_engine piper >/dev/null
   fi
 fi
 
@@ -101,34 +101,34 @@ fi
 if [ -z "$DRY" ] && ! claude auth status 2>/dev/null | grep -q '"loggedIn": *true'; then
   say "Sign in to Claude (a browser window opens; use the account with your Claude plan)"
   if [ -t 0 ] || [ -e /dev/tty ]; then
-    claude auth login </dev/tty || warn "Sign-in didn't finish. Run: talkthru login"
+    claude auth login </dev/tty || warn "Sign-in didn't finish. Run: talk2 login"
   else
-    warn "Run 'talkthru login' to sign in."
+    warn "Run 'talk2 login' to sign in."
   fi
 fi
 
 # --- 6. Command and background service ---------------------------------------------
-say "Setting up the talkthru command and background service"
-install -m 755 "$APP/talkthru.sh" "$BIN/talkthru"
-install -m 644 "$APP/talkthru.service" "$UNIT_DIR/talkthru.service"
-PYTHONPATH="$APP" "$VENV/bin/python" -c 'from talkthru import config; config.ensure_file()'
+say "Setting up the talk2 command and background service"
+install -m 755 "$APP/talk2.sh" "$BIN/talk2"
+install -m 644 "$APP/talk2.service" "$UNIT_DIR/talk2.service"
+PYTHONPATH="$APP" "$VENV/bin/python" -c 'from talk2 import config; config.ensure_file()'
 if [ -z "$DRY" ]; then
   systemctl --user daemon-reload
-  systemctl --user enable talkthru.service >/dev/null 2>&1
-  systemctl --user restart talkthru.service
+  systemctl --user enable talk2.service >/dev/null 2>&1
+  systemctl --user restart talk2.service
 fi
 
 cat <<EOF
 
-TalkThru is installed and running.
+talk2 is installed and running.
 
   Say "Hey Jarvis", then your question. A rising chime means it's listening.
   After a reply you can ask a follow-up without the wake word for a few seconds.
   Say "Hey Jarvis" while it talks to cut it off, or "new conversation" to start fresh.
 
-  talkthru demo-voices     hear the voices, then: talkthru set voice am_michael
-  talkthru mic-test        check the mic level and wake word
-  talkthru log             see what it's hearing and doing
-  talkthru help            everything else
+  talk2 demo-voices     hear the voices, then: talk2 set voice am_michael
+  talk2 mic-test        check the mic level and wake word
+  talk2 log             see what it's hearing and doing
+  talk2 help            everything else
 
 EOF

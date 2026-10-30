@@ -79,7 +79,7 @@ class ClaudeSession:
             if self.proc and self.proc.poll() is None:
                 return
             if not self.claude_bin or not os.path.exists(self.claude_bin):
-                raise ClaudeError("Claude Code isn't installed. Run talkthru setup.")
+                raise ClaudeError("Claude Code isn't installed. Run talk2 update to reinstall.")
             env = dict(os.environ)
             # A parent Claude Code session must not leak into ours.
             for k in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID"):
@@ -214,7 +214,7 @@ class ClaudeSession:
         msg = str(ev.get("result") or ev.get("subtype") or "")
         low = msg.lower()
         if "login" in low or "log in" in low or "authenticat" in low or "api key" in low:
-            return "Claude isn't signed in. Run talkthru login in a terminal."
+            return "Claude isn't signed in. Run talk2 login in a terminal."
         if "rate" in low and "limit" in low or "usage limit" in low:
             return "You've hit your Claude usage limit for now."
         log(f"claude error result: {msg[:300]}")

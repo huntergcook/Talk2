@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# The `talkthru` command. Installed to ~/.local/bin/talkthru.
+# The `talk2` command. Installed to ~/.local/bin/talk2.
 set -euo pipefail
-DATA="$HOME/.local/share/talkthru"
+DATA="$HOME/.local/share/talk2"
 PY="$DATA/venv/bin/python"
 export PYTHONPATH="$DATA/app"
 export PATH="$HOME/.local/bin:$PATH"
-svc() { systemctl --user "$@" talkthru.service; }
-py() { "$PY" -m talkthru "$@"; }
+svc() { systemctl --user "$@" talk2.service; }
+py() { "$PY" -m talk2 "$@"; }
 
 case "${1:-help}" in
   status)   svc status --no-pager ;;
-  log|logs) journalctl --user -u talkthru.service -n 60 -f ;;
-  start|stop|restart) svc "$1"; echo "TalkThru: $1 done" ;;
+  log|logs) journalctl --user -u talk2.service -n 60 -f ;;
+  start|stop|restart) svc "$1"; echo "talk2: $1 done" ;;
   login)    claude auth login ;;
-  update)   curl -fsSL "https://raw.githubusercontent.com/${TALKTHRU_REPO:-huntergcook/talk2}/${TALKTHRU_REF:-main}/install.sh" | bash ;;
-  set)      shift; py set "$@" && svc restart && echo "(restarted TalkThru)" ;;
-  edit)     "${EDITOR:-nano}" "$HOME/.config/talkthru/settings.json" && svc restart ;;
+  update)   curl -fsSL "https://raw.githubusercontent.com/${TALK2_REPO:-huntergcook/talk2}/${TALK2_REF:-main}/install.sh" | bash ;;
+  set)      shift; py set "$@" && svc restart && echo "(restarted talk2)" ;;
+  edit)     "${EDITOR:-nano}" "$HOME/.config/talk2/settings.json" && svc restart ;;
   say|ask|voices|demo-voices|settings)
             cmd="$1"; shift
             # The service would hear and answer the demo through the speakers.
@@ -28,15 +28,15 @@ case "${1:-help}" in
             if [ "$paused" = 1 ]; then svc start; fi ;;
   uninstall)
             svc disable --now 2>/dev/null || true
-            rm -f "$HOME/.config/systemd/user/talkthru.service" "$HOME/.local/bin/talkthru"
+            rm -f "$HOME/.config/systemd/user/talk2.service" "$HOME/.local/bin/talk2"
             systemctl --user daemon-reload
             rm -rf "$DATA"
-            echo "TalkThru removed. Settings kept in ~/.config/talkthru (delete it if you like)." ;;
+            echo "talk2 removed. Settings kept in ~/.config/talk2 (delete it if you like)." ;;
   *) cat <<'EOF'
-talkthru: voice assistant for the Steam Frame
+talk2: voice assistant for the Steam Frame
 
   status | log | start | stop | restart
-  set KEY VALUE        change a setting and restart, e.g. talkthru set voice am_michael
+  set KEY VALUE        change a setting and restart, e.g. talk2 set voice am_michael
   settings             show all settings      edit   open settings.json
   demo-voices          hear six voices        voices list every voice
   say "text"           speak text             ask "question"  ask Claude without the mic

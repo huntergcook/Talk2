@@ -1,9 +1,9 @@
 import json
 import os
 
-CONFIG_DIR = os.path.expanduser("~/.config/talkthru")
+CONFIG_DIR = os.path.expanduser("~/.config/talk2")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "settings.json")
-DATA_DIR = os.path.expanduser("~/.local/share/talkthru")
+DATA_DIR = os.path.expanduser("~/.local/share/talk2")
 MODELS_DIR = os.path.join(DATA_DIR, "models")
 
 DEFAULTS = {
@@ -24,7 +24,7 @@ DEFAULTS = {
     "extra_instructions": "",
     # Voice
     "voice_engine": "kokoro",        # kokoro (natural) or piper (faster, more robotic)
-    "voice": "af_heart",             # Kokoro voice, see `talkthru voices`
+    "voice": "af_heart",             # Kokoro voice, see `talk2 voices`
     "voice_speed": 1.05,
     "piper_voice": "en_US-amy-medium",
     "volume": 0.9,
@@ -43,7 +43,7 @@ def load():
     except FileNotFoundError:
         pass
     except ValueError as e:
-        print(f"talkthru: ignoring broken {CONFIG_PATH}: {e}")
+        print(f"talk2: ignoring broken {CONFIG_PATH}: {e}")
     return cfg
 
 

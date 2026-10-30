@@ -42,4 +42,4 @@ def clean(text):
 
 
 def default_models_dir():
-    return os.path.expanduser("~/.local/share/talkthru/models/whisper")
+    return os.path.expanduser("~/.local/share/talk2/models/whisper")

@@ -1,4 +1,4 @@
-"""python -m talkthru <command>
+"""python -m talk2 <command>
 
   run              start the voice assistant (the service runs this)
   say TEXT         speak TEXT with the current voice
@@ -82,7 +82,7 @@ def main(argv):
 
     elif cmd == "set":
         if len(rest) != 2 or rest[0] not in config.DEFAULTS:
-            print("usage: talkthru set KEY VALUE\nkeys: " + ", ".join(config.DEFAULTS))
+            print("usage: talk2 set KEY VALUE\nkeys: " + ", ".join(config.DEFAULTS))
             return 2
         key, raw = rest
         default = config.DEFAULTS[key]
