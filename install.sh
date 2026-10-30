@@ -2,7 +2,7 @@
 # Installs talk2 on the Steam Frame: a voice assistant that listens for
 # "Hey Jarvis", sends what you say to Claude Code, and speaks the reply.
 #
-#   curl -fsSL https://raw.githubusercontent.com/huntergcook/talk2/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/huntergcook/Talk2/main/install.sh | bash
 #
 # Everything goes in your home folder (SteamOS's system files stay untouched):
 #   ~/.local/share/talk2   app, Python environment and models (~700 MB)
@@ -11,7 +11,7 @@
 # Running it again updates talk2 and keeps your settings.
 set -euo pipefail
 
-REPO="${TALK2_REPO:-huntergcook/talk2}"
+REPO="${TALK2_REPO:-huntergcook/Talk2}"
 REF="${TALK2_REF:-main}"
 DATA="$HOME/.local/share/talk2"
 APP="$DATA/app"

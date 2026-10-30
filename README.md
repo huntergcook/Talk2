@@ -16,7 +16,7 @@ Listen to the voices: [docs/voice-samples.mp3](docs/voice-samples.mp3) (Heart, B
 2. Paste this and press Enter:
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/huntergcook/talk2/main/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/huntergcook/Talk2/main/install.sh | bash
    ```
 
 3. When asked, sign in to Claude in the browser window that opens.

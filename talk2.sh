@@ -13,7 +13,7 @@ case "${1:-help}" in
   log|logs) journalctl --user -u talk2.service -n 60 -f ;;
   start|stop|restart) svc "$1"; echo "talk2: $1 done" ;;
   login)    claude auth login ;;
-  update)   curl -fsSL "https://raw.githubusercontent.com/${TALK2_REPO:-huntergcook/talk2}/${TALK2_REF:-main}/install.sh" | bash ;;
+  update)   curl -fsSL "https://raw.githubusercontent.com/${TALK2_REPO:-huntergcook/Talk2}/${TALK2_REF:-main}/install.sh" | bash ;;
   set)      shift; py set "$@" && svc restart && echo "(restarted talk2)" ;;
   edit)     "${EDITOR:-nano}" "$HOME/.config/talk2/settings.json" && svc restart ;;
   say|ask|voices|demo-voices|settings)
