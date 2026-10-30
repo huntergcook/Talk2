@@ -8,6 +8,8 @@
   set KEY VALUE    change a setting, e.g. `set voice am_michael`
   settings         show the current settings
   mic-test         show live mic level and wake word score for 15 seconds
+  mic-users        list other apps using the mic
+  unmute           un-mute other apps' mic streams talk2 muted (run on service stop)
 """
 
 import json
@@ -95,6 +97,16 @@ def main(argv):
         cfg[key] = value
         config.save(cfg)
         print(f"{key} = {json.dumps(value)}")
+
+    elif cmd == "unmute":
+        from .share import MicSharing
+        MicSharing().restore_after_crash()
+
+    elif cmd == "mic-users":
+        from .share import other_mic_streams
+        others = other_mic_streams()
+        print("\n".join(f"{name}{' (muted)' if m else ''}" for _, name, m in others)
+              or "No other app is using the mic.")
 
     elif cmd == "settings":
         print(json.dumps(cfg, indent=2))

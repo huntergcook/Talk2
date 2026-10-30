@@ -38,6 +38,14 @@ A falling chime means it heard you and is thinking. A low chime means it didn't 
 
 Claude can search the web and read files on the headset. Running commands or changing files is off by default, since a misheard word shouldn't run anything; turn it on with `talk2 set allow_commands true`.
 
+## Discord and PC streaming
+
+talk2 shares the mic; it never takes it over. When you stream from your PC over SteamVR, the PC (and Discord on it) keeps hearing you exactly as before, while talk2 listens for "Hey Jarvis" alongside it.
+
+While another app is using the mic, talk2 changes one thing: it skips the follow-up window, so whatever you say to your friends after a reply isn't sent to Claude. You need "Hey Jarvis" for each question. `talk2 set follow_up_when_shared true` turns follow-ups back on.
+
+By default your friends hear you say "Hey Jarvis" and your question, like any other talking. To keep your questions to Claude out of Discord, run `talk2 set keep_questions_private true`. Then talk2 mutes the mic for the PC from the moment it hears "Hey Jarvis" until the reply ends, and always unmutes it afterwards, even if talk2 crashes or is stopped. `talk2 mic-users` shows which apps are using the mic.
+
 ## Settings
 
 ```sh
@@ -61,6 +69,8 @@ talk2 settings                    # everything else
 | `speech_model` | `base.en` | Speech recognition: `tiny.en` (fastest) … `small.en` (most accurate) |
 | `claude_model` | `sonnet` | `haiku`, `sonnet`, `opus`, or blank for your account default |
 | `allow_commands` | `false` | Let Claude run commands and edit files on the headset |
+| `follow_up_when_shared` | `false` | Allow follow-ups without the wake word while another app (like Discord over PC streaming) uses the mic |
+| `keep_questions_private` | `false` | Mute the mic for other apps from "Hey Jarvis" until the reply ends |
 | `threads` | `4` | CPU threads for speech; lower it if a game stutters |
 | `chimes` | `true` | The little listening sounds |
 
@@ -68,6 +78,8 @@ talk2 settings                    # everything else
 
 - **It doesn't wake up.** Run `talk2 mic-test` and say "Hey Jarvis". The level bar should move when you talk and the score should jump above 0.5. If the bar doesn't move, the Frame's mic isn't the default input; pick it in the sound settings.
 - **It wakes up by itself.** `talk2 set wake_threshold 0.65`.
+- **Friends on Discord can't hear you.** Run `talk2 unmute` (it un-mutes anything talk2 muted), then `talk2 mic-users`; the PC streaming app should be listed without "(muted)".
+- **talk2 hears nothing while streaming from the PC.** If `talk2 log` says the mic sent only silence, the streaming app has the mic to itself; please open an issue with `talk2 mic-users` output.
 - **"Claude isn't signed in."** Run `talk2 login`.
 - **See what it's doing.** `talk2 log` shows what it heard, how long each step took, and any errors.
 

@@ -16,6 +16,9 @@ DEFAULTS = {
     "end_silence_ms": 800,           # pause length that ends your question
     "max_question_s": 30,
     "follow_up_s": 5,                # after a reply, keep listening this long without the wake word
+    # Sharing the mic (e.g. Discord on your PC over SteamVR streaming)
+    "follow_up_when_shared": False,  # follow-ups without the wake word even while another app uses the mic
+    "keep_questions_private": False, # mute the mic for other apps from the wake word until the reply ends
     "speech_model": "base.en",       # faster-whisper model: tiny.en, base.en, small.en, distil-small.en
     # Claude
     "claude_model": "sonnet",        # sonnet, haiku, opus, or a full model name; blank = your default

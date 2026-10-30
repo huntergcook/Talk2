@@ -26,6 +26,7 @@ case "${1:-help}" in
             svc is-active --quiet && { paused=1; svc stop; } || paused=0
             py mic-test || true
             if [ "$paused" = 1 ]; then svc start; fi ;;
+  mic-users|unmute) py "$1" ;;
   uninstall)
             svc disable --now 2>/dev/null || true
             rm -f "$HOME/.config/systemd/user/talk2.service" "$HOME/.local/bin/talk2"
@@ -41,7 +42,9 @@ talk2: voice assistant for the Steam Frame
   demo-voices          hear six voices        voices list every voice
   say "text"           speak text             ask "question"  ask Claude without the mic
   mic-test             live mic level and wake word score
-  login                sign in to Claude      update  install the latest version
+  mic-users            other apps using the mic (e.g. SteamVR streaming to your PC)
+  unmute               un-mute other apps' mic if talk2 ever left it muted
+  login               sign in to Claude      update  install the latest version
   uninstall
 
 Handy settings:
@@ -51,7 +54,9 @@ Handy settings:
   claude_model      sonnet, haiku (fastest), opus
   allow_commands    false; true lets Claude run commands on the headset
   follow_up_s       5; seconds to keep listening after a reply
-  threads           4; lower if games stutter
+  keep_questions_private  false; true mutes your mic for Discord/the PC
+                    from "Hey Jarvis" until the reply ends
+  threads          4; lower if games stutter
 EOF
   ;;
 esac

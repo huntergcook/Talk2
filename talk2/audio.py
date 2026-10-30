@@ -1,8 +1,11 @@
 """Microphone capture and speaker playback through PipeWire's command-line tools.
 
-Using parecord/pw-record/arecord as subprocesses avoids compiled audio
-libraries in the virtualenv; SteamOS ships PipeWire with its PulseAudio
-compatibility layer, so the first option is normally available.
+Using parecord/pw-record as subprocesses avoids compiled audio libraries in
+the virtualenv; SteamOS ships PipeWire with its PulseAudio compatibility layer.
+
+The mic is always opened as an ordinary PipeWire stream, never as the raw ALSA
+device, so it is shared: SteamVR streaming (and Discord on the PC through it)
+keeps getting the same mic while talk2 listens.
 """
 
 import queue
@@ -19,29 +22,30 @@ MIC_RATE = 16000
 MIC_CHUNK = 1280  # 80 ms
 
 
+APP_NAME = "talk2"
+_PW_PROPS = ["-P", "{ application.name = \"talk2\" }"]
+
+
 def _record_cmds(device):
+    # No arecord fallback: on a raw hw: device ALSA can take the mic exclusively.
     pulse_dev = [f"--device={device}"] if device else []
     pw_dev = ["--target", device] if device else []
-    alsa_dev = ["-D", device] if device else []
     return [
         ["parecord", "--raw", "--format=s16le", f"--rate={MIC_RATE}", "--channels=1",
-         "--latency-msec=40", "--client-name=talk2", *pulse_dev],
+         "--latency-msec=40", f"--client-name={APP_NAME}", *pulse_dev],
         ["pw-record", "--raw", "--rate", str(MIC_RATE), "--channels", "1",
-         "--format", "s16", "--latency", "40ms", *pw_dev, "-"],
-        ["arecord", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(MIC_RATE), "-c", "1", *alsa_dev],
+         "--format", "s16", "--latency", "40ms", *_PW_PROPS, *pw_dev, "-"],
     ]
 
 
 def _play_cmds(rate, device):
     pulse_dev = [f"--device={device}"] if device else []
     pw_dev = ["--target", device] if device else []
-    alsa_dev = ["-D", device] if device else []
     return [
         ["pacat", "--playback", "--raw", "--format=s16le", f"--rate={rate}", "--channels=1",
-         "--latency-msec=60", "--client-name=talk2", *pulse_dev],
+         "--latency-msec=60", f"--client-name={APP_NAME}", *pulse_dev],
         ["pw-play", "--raw", "--rate", str(rate), "--channels", "1", "--format", "s16",
-         "--latency", "60ms", *pw_dev, "-"],
-        ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(rate), "-c", "1", *alsa_dev],
+         "--latency", "60ms", *_PW_PROPS, *pw_dev, "-"],
     ]
 
 
@@ -70,7 +74,7 @@ class Microphone:
     def _run(self):
         cmds = _first_available(_record_cmds(self.device))
         if not cmds:
-            log("no recorder found (need parecord, pw-record or arecord)")
+            log("no recorder found (need parecord or pw-record from PipeWire)")
             return
         i = 0
         while self.running:
@@ -80,11 +84,18 @@ class Microphone:
                 self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 log(f"microphone: {cmd[0]}")
                 nbytes = MIC_CHUNK * 2
+                silent = 0
                 while self.running:
                     data = self.proc.stdout.read(nbytes)
                     if not data or len(data) < nbytes:
                         break
                     chunk = np.frombuffer(data, dtype=np.int16)
+                    # Exact digital silence for a long stretch means we're
+                    # getting no real audio (muted, or the wrong input).
+                    silent = silent + 1 if not chunk.any() else 0
+                    if silent == int(15 / 0.08):
+                        log("the microphone has sent only silence for 15 s: is it muted, "
+                            "or is another input the default? Try: talk2 mic-test")
                     try:
                         self.q.put_nowait(chunk)
                     except queue.Full:  # we fell behind; drop the oldest audio
@@ -101,6 +112,10 @@ class Microphone:
             if time.time() - started < 2:
                 i += 1  # died at once: try the next tool
             time.sleep(0.5)
+
+    def pids(self):
+        p = self.proc
+        return [p.pid] if p and p.poll() is None else []
 
     def read(self, timeout=1.0):
         try:
@@ -140,7 +155,7 @@ class Speaker:
                 return True
             except OSError:
                 continue
-        log("no player found (need pacat, pw-play or aplay)")
+        log("no player found (need pacat or pw-play from PipeWire)")
         return False
 
     def play(self, audio, rate):

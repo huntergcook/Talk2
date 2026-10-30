@@ -10,6 +10,8 @@ Environment=PYTHONPATH=%h/.local/share/talk2/app
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/share/talk2/venv/bin/python -m talk2 run
+# Never leave other apps' mic muted, however talk2 stops.
+ExecStopPost=-%h/.local/share/talk2/venv/bin/python -m talk2 unmute
 Restart=always
 RestartSec=2
 # Run below the game in CPU priority.

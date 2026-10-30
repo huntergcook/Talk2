@@ -3,6 +3,8 @@
 import os
 import queue
 import re
+import signal
+import sys
 import threading
 import time
 
@@ -12,6 +14,7 @@ from . import config
 from .audio import CHIME_CANCEL, CHIME_DONE, CHIME_LISTEN, MIC_CHUNK, MIC_RATE, Microphone, Speaker
 from .claude import ClaudeError, ClaudeSession
 from .log import log
+from .share import MicSharing
 from .speech_text import SentenceStream
 
 CHUNK_S = MIC_CHUNK / MIC_RATE
@@ -100,6 +103,7 @@ class Assistant:
         self.claude = ClaudeSession(model=c["claude_model"], allow_commands=c["allow_commands"],
                                     extra_prompt=c["extra_instructions"])
         self.ep = Endpointer(c["end_silence_ms"], c["max_question_s"])
+        self.share = MicSharing(own_pids=self.mic.pids)
         self.filler_i = 0
 
     # -- helpers -----------------------------------------------------------
@@ -120,6 +124,9 @@ class Assistant:
 
     # -- main loop ---------------------------------------------------------
     def run(self):
+        # Let `talk2 stop` run cleanup (un-muting other apps' mic) instead of dying mid-question.
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        self.share.restore_after_crash()
         self.mic.start()
         try:
             self.claude.start()
@@ -150,6 +157,26 @@ class Assistant:
             s.restart()
 
     def converse(self):
+        """One exchange, plus follow-ups. Other apps' mic access is untouched
+        unless keep_questions_private is on, and then always restored."""
+        muted = []
+        if self.cfg["keep_questions_private"]:
+            muted = self.share.mute_others()
+        try:
+            self._converse()
+        finally:
+            self.share.unmute(muted)
+
+    def _follow_up_allowed(self):
+        if not self.cfg["follow_up_s"]:
+            return False
+        if self.cfg["follow_up_when_shared"] or self.cfg["keep_questions_private"]:
+            return True
+        # While the mic is shared (e.g. Discord over SteamVR streaming), what you
+        # say next is probably meant for your friends, not Claude.
+        return not self.share.shared()
+
+    def _converse(self):
         self.speaker.stop()
         # No flush here: people often say the question in the same breath as
         # the wake word, and that audio is already queued.
@@ -175,7 +202,7 @@ class Assistant:
                 self.chime(CHIME_LISTEN)
                 audio = self.ep.record(self.read_mic, start_timeout_s=5)
                 continue
-            if not self.cfg["follow_up_s"]:
+            if not self._follow_up_allowed():
                 return
             audio = self.ep.record(self.read_mic, start_timeout_s=self.cfg["follow_up_s"])
             if audio is None:
