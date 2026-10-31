@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs talk2 on the Steam Frame: a voice assistant that listens for
-# "Hey Jarvis", sends what you say to Claude Code, and speaks the reply.
+# "Hey Claude", sends what you say to Claude Code, and speaks the reply.
 #
 #   curl -fsSL https://raw.githubusercontent.com/huntergcook/Talk2/main/install.sh | bash
 #
@@ -58,7 +58,7 @@ fi
 say "Installing speech recognition and voice (a few minutes the first time)"
 if [ -z "$DRY" ]; then
   uv pip install --quiet --python "$VENV/bin/python" --upgrade \
-    "numpy>=1.26" "onnxruntime>=1.20" "faster-whisper>=1.1" "kokoro-onnx>=0.4"
+    "numpy>=1.26" "onnxruntime>=1.20" "faster-whisper>=1.1" "kokoro-onnx>=0.4" "pillow>=10"
 fi
 
 # --- 3. Models ----------------------------------------------------------------
@@ -69,6 +69,10 @@ get() { [ -s "$2" ] || { echo "  $(basename "$2")"; [ -n "$DRY" ] && : > "$2" ||
 for f in melspectrogram.onnx embedding_model.onnx hey_jarvis_v0.1.onnx; do
   get "$OWW/$f" "$MODELS/wakeword/$f"
 done
+# "Hey Claude" (openWakeWord model by gdiamos, Apache 2.0). Public: no Hugging Face account needed.
+get "https://huggingface.co/gdiamos/hey-claude/resolve/main/hey_claude.onnx" "$MODELS/wakeword/hey_claude.onnx" \
+  || { warn "Couldn't download the Hey Claude model; using Hey Jarvis for now."; \
+       PYTHONPATH="$APP" "$VENV/bin/python" -m talk2 set wake_word hey_jarvis_v0.1 >/dev/null; }
 get "$KOK/kokoro-v1.0.int8.onnx" "$MODELS/kokoro/kokoro-v1.0.int8.onnx"
 get "$KOK/kokoro-v1.0.onnx" "$MODELS/kokoro/kokoro-v1.0.onnx"
 get "$KOK/voices-v1.0.bin"  "$MODELS/kokoro/voices-v1.0.bin"
@@ -125,9 +129,11 @@ cat <<EOF
 
 talk2 is installed and running.
 
-  Say "Hey Jarvis", then your question. A rising chime means it's listening.
+  Say "Hey Claude", then your question. A rising chime means it's listening.
   After a reply you can ask a follow-up without the wake word for a few seconds.
-  Say "Hey Jarvis" while it talks to cut it off, or "new conversation" to start fresh.
+  Just talk over it to cut in, or say "stop". "New conversation" starts fresh.
+
+  For a wake word that catches you every time, run:  talk2 enroll
 
   talk2 demo-voices     hear the voices, then: talk2 set voice am_michael
   talk2 mic-test        check the mic level and wake word

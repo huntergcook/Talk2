@@ -17,17 +17,38 @@ import uuid
 from .config import TOOLS_DIR
 from .log import log
 
-VOICE_PROMPT = """You are being used as a voice assistant inside a Steam Frame VR headset.
-The user is speaking to you while wearing the headset, often while playing a game, and
-everything you write is read aloud by a text-to-speech voice.
+VOICE_PROMPT = """You are a voice assistant inside the user's Steam Frame VR headset.
+They're talking to you while wearing it, often mid-game, and everything you write is
+read aloud by a text-to-speech voice.
 
-- Answer conversationally, like a friend talking, in a sentence or three unless the user
-  asks for more. Lead with the answer.
-- Write only speakable prose: no markdown, lists, headings, tables, emoji, code blocks or URLs.
-  Spell out symbols and units the way you would say them.
-- The question comes from speech recognition and may contain misheard words. Use the
-  most likely meaning; ask a short question back only if you really cannot tell.
-- If you use a tool, don't narrate it; just give the result.
+How you talk:
+- Relaxed and casual, like a friend hanging out on the couch, not a customer service
+  agent. Contractions, plain everyday words, a little warmth or humor when it fits.
+  No "Certainly!", "Great question" or "I'd be happy to".
+- Short. One sentence is ideal, two at most, about 25 words, unless they ask for more.
+  Lead with the answer itself; skip background, caveats and recaps. They can always ask
+  a follow-up. Don't end with an offer like "want me to...?" unless it really matters.
+- If a full answer needs more than that, say the short version and put the rest on the
+  panel (see below) instead of reading it all out.
+- Speakable prose only: no markdown, lists, headings, emoji, code or URLs in what you say.
+  Say symbols and units the way a person would.
+- The question comes from speech recognition and may have misheard words. Go with the
+  most likely meaning; only ask back if you really can't tell.
+
+Getting things done:
+- When they ask you to do something (open an app, start a game, change the volume, set a
+  timer, turn on passthrough...), just do it with your tools, then reply with only
+  "Done." or a couple of words like "Opening Chromium." No preamble, no narration.
+- Never describe what you're about to do or which tool you're using.
+- Each message starts with a line in brackets saying what's going on right now (time,
+  game, battery and so on). Use it to answer naturally; "this game" means the game
+  shown there. Don't read it back unless asked.
+- If they mention something on screen ("what's this", "read this", "which way"), use the
+  look tool to see their view first.
+- Anything worth reading rather than hearing (a list, steps, instructions, a recipe, a
+  build, a schedule, a comparison) goes on the panel with show_panel, in full and nicely
+  formatted; then say one short sentence like "Put the steps up on the panel." Use the
+  panel whenever they ask to see, show or write something down.
 - The headset runs SteamOS (Linux)."""
 
 TOOLS_PROMPT = """You keep a toolbox of small Python scripts in {dir}.
@@ -65,6 +86,7 @@ COMMANDS_PROMPT = """You can run commands and change files on this headset.
   Chrome isn't installed; use that Chromium when asked for Chrome."""
 
 READ_ONLY_TOOLS = ["WebSearch", "WebFetch", "Read", "Glob", "Grep"]
+MCP_TOOLS = "mcp__talk2"   # every tool from talk2's own MCP server (mcp_server.py)
 
 
 def toolbox_listing(tools_dir=TOOLS_DIR):
@@ -89,7 +111,7 @@ class ClaudeSession:
     """Talks to one `claude -p` process over stream-json stdin/stdout."""
 
     def __init__(self, claude_bin="claude", model="", allow_commands=False,
-                 make_tools=False, extra_prompt="", cwd=None):
+                 make_tools=False, extra_prompt="", cwd=None, mcp_env=None):
         found = shutil.which(claude_bin)
         if not found and claude_bin == "claude":
             found = os.path.expanduser("~/.local/bin/claude")  # native installer's spot
@@ -98,6 +120,7 @@ class ClaudeSession:
         self.allow_commands = allow_commands
         self.make_tools = make_tools
         self.extra_prompt = extra_prompt
+        self.mcp_env = mcp_env   # None = no talk2 tools (e.g. `talk2 ask`)
         self.cwd = cwd or os.path.expanduser("~")
         self.proc = None
         self.events = queue.Queue()
@@ -123,6 +146,13 @@ class ClaudeSession:
                 allowed += [f"Write(/{TOOLS_DIR}/**)", f"Edit(/{TOOLS_DIR}/**)",
                             f"Bash(python3 {TOOLS_DIR}/*)"]
             prompt += "\n\n" + TOOLS_PROMPT.format(dir=TOOLS_DIR, tools=toolbox_listing())
+        if self.mcp_env is not None:
+            from . import memory
+            learned = memory.prompt_section()
+            if learned:
+                prompt += "\n\n" + learned
+            prompt += ("\n\nWhen the user tells you something about themselves worth keeping, or asks "
+                       "you to remember something, save it with the remember tool; forget removes it.")
         if self.extra_prompt:
             prompt += "\n\n" + self.extra_prompt
         cmd = [self.claude_bin, "-p",
@@ -130,11 +160,21 @@ class ClaudeSession:
                "--output-format", "stream-json",
                "--verbose", "--include-partial-messages",
                "--append-system-prompt", prompt,
-               "--tools", ",".join(tools),
-               "--allowedTools", ",".join(allowed)]
+               "--tools", ",".join(tools)]
+        if self.mcp_env is not None:
+            cmd += ["--mcp-config", json.dumps(self._mcp_config()), "--strict-mcp-config"]
+            allowed.append(MCP_TOOLS)
+        cmd += ["--allowedTools", ",".join(allowed)]
         if self.model:
             cmd += ["--model", self.model]
         return cmd
+
+    def _mcp_config(self):
+        import sys
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {"PYTHONPATH": app_dir, "PYTHONUNBUFFERED": "1", **self.mcp_env}
+        return {"mcpServers": {"talk2": {"type": "stdio", "command": sys.executable,
+                                         "args": ["-m", "talk2.mcp_server"], "env": env}}}
 
     def start(self):
         with self.lock:

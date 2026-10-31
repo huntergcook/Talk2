@@ -24,10 +24,12 @@ case "${1:-help}" in
             if [ "$cmd" != settings ] && svc is-active --quiet; then paused=1; svc stop; else paused=0; fi
             py "$cmd" "$@" || true
             if [ "$paused" = 1 ]; then svc start; fi ;;
-  mic-test)
+  mic-test|enroll)
+            # These need the mic and speakers to themselves.
             svc is-active --quiet && { paused=1; svc stop; } || paused=0
-            py mic-test || true
+            py "$1" || true
             if [ "$paused" = 1 ]; then svc start; fi ;;
+  memory|look-test|context) py "$@" ;;
   mic-users|unmute) py "$1" ;;
   desktop)  # Run an app in Desktop Mode, whose session the service can't see.
             shift
@@ -50,6 +52,10 @@ talk2: voice assistant for the Steam Frame
   demo-voices          hear six voices        voices list every voice
   say "text"           speak text             ask "question"  ask Claude without the mic
   mic-test             live mic level and wake word score
+  enroll               teach "Hey Claude" your voice (about a minute; repeat any time)
+  memory [clear]       what talk2 has learned about you, or forget it all
+  context              what talk2 tells Claude about the headset right now
+  look-test            take a screenshot the way Claude's look tool does
   mic-users            other apps using the mic (e.g. SteamVR streaming to your PC)
   desktop APP ARGS     start an app in Desktop Mode
   unmute               un-mute other apps' mic if talk2 ever left it muted
@@ -58,15 +64,16 @@ talk2: voice assistant for the Steam Frame
 
 Handy settings:
   voice             af_heart, af_bella, am_michael, am_fenrir, bf_emma, bm_george ...
-  voice_speed       1.05 (0.8 to 1.4)
+  voice_speed       1.2 (0.8 to 1.5)
   voice_effect      none; robot for a deep, metallic voice
-  wake_threshold    0.5; raise if it wakes by itself, lower if it misses you
+  wake_sensitivity  0.15; lower catches quieter "Hey Claude"s (each is double-checked)
+  barge_in          true; just talk over a reply to cut in
   claude_model      sonnet, haiku (fastest), opus
   allow_commands    false; true lets Claude run commands on the headset
   make_tools        false; true lets Claude write and run its own scripts
   follow_up_s       5; seconds to keep listening after a reply
   keep_questions_private  false; true mutes your mic for Discord/the PC
-                    from "Hey Jarvis" until the reply ends
+                    from "Hey Claude" until the reply ends
   threads          4; lower if games stutter
 EOF
   ;;

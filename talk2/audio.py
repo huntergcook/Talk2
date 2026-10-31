@@ -225,3 +225,71 @@ CHIME_LISTEN = tone([660, 990])      # rising: I'm listening
 CHIME_DONE = tone([880, 660], ms=70)  # falling: got it
 CHIME_CANCEL = tone([440, 330], ms=110)
 CHIME_END = tone([660, 495, 330], ms=130)  # slow fall: the conversation is over
+
+
+# -- echo cancellation -----------------------------------------------------------
+EC_SOURCE = "talk2_mic"   # the mic with talk2's own voice removed
+EC_SINK = "talk2_out"     # where talk2 plays, so the canceller knows what to remove
+
+
+class EchoCancel:
+    """PipeWire's WebRTC echo canceller, just for talk2.
+
+    Loads module-echo-cancel with a private sink (talk2 plays into it) and a
+    private source (talk2 listens to it). Everything else — your default mic,
+    Discord, SteamVR streaming, game audio — keeps using the real devices, and
+    the defaults are put back in case PipeWire switched them.
+    """
+
+    def __init__(self):
+        self.module = None
+
+    @staticmethod
+    def _pactl(*args, timeout=4):
+        return subprocess.run(["pactl", *args], capture_output=True, text=True, timeout=timeout)
+
+    def start(self):
+        if not shutil.which("pactl"):
+            return False
+        try:
+            self._unload_stale()
+            src = self._pactl("get-default-source").stdout.strip()
+            sink = self._pactl("get-default-sink").stdout.strip()
+            if not src or not sink:
+                return False
+            r = self._pactl("load-module", "module-echo-cancel", "aec_method=webrtc",
+                            f"source_name={EC_SOURCE}", f"sink_name={EC_SINK}",
+                            f"source_master={src}", f"sink_master={sink}",
+                            "source_properties=device.description=talk2-echo-cancelled-mic",
+                            "sink_properties=device.description=talk2-voice")
+            if r.returncode != 0 or not r.stdout.strip().isdigit():
+                log(f"echo cancellation unavailable: {(r.stderr or r.stdout).strip()[:200]}")
+                return False
+            self.module = r.stdout.strip()
+            time.sleep(0.3)
+            # Keep everyone else on the real devices.
+            if self._pactl("get-default-source").stdout.strip() != src:
+                self._pactl("set-default-source", src)
+            if self._pactl("get-default-sink").stdout.strip() != sink:
+                self._pactl("set-default-sink", sink)
+            log(f"echo cancellation on (module {self.module}, mic {src})")
+            return True
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log(f"echo cancellation unavailable: {e}")
+            return False
+
+    def _unload_stale(self):
+        """Remove a canceller left behind by a crashed talk2."""
+        out = self._pactl("list", "short", "modules").stdout
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[1] == "module-echo-cancel" and EC_SOURCE in parts[2]:
+                self._pactl("unload-module", parts[0])
+
+    def stop(self):
+        if self.module:
+            try:
+                self._pactl("unload-module", self.module)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            self.module = None

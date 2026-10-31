@@ -48,6 +48,8 @@ def other_mic_streams(source_outputs=None, sources=None, own_pids=()):
             continue
         if str(props.get("node.virtual")).lower() == "true":
             continue  # SteamOS's own mic filters (eq_capture, ns_capture), not an app
+        if "echo-cancel" in str(props.get("node.name", "")) or "talk2" in str(props.get("node.name", "")):
+            continue  # talk2's own echo canceller
         if so.get("source") in monitors or so.get("corked"):
             continue  # not a mic, or paused and not hearing anything
         found.append((so.get("index"), name, bool(so.get("mute"))))

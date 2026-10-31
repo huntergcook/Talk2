@@ -1,5 +1,14 @@
-"""The voice loop: wake word -> listen -> transcribe -> Claude -> speak."""
+"""The voice loop: wake word -> listen -> transcribe -> Claude -> speak.
 
+While talk2 is talking you can:
+- say "Hey Claude" to cut it off and ask something new,
+- say "stop" / "shut up" to end the reply,
+- or just start talking (barge-in): it pauses at once, listens to the whole
+  thing, and answers that instead. If it was only noise or its own echo, it
+  picks up where it left off.
+"""
+
+import collections
 import os
 import queue
 import re
@@ -10,8 +19,9 @@ import time
 
 import numpy as np
 
-from . import config
-from .audio import CHIME_CANCEL, CHIME_DONE, CHIME_END, CHIME_LISTEN, MIC_CHUNK, MIC_RATE, Microphone, Speaker
+from . import actions, config, context, memory, quick
+from .audio import (CHIME_CANCEL, CHIME_DONE, CHIME_END, CHIME_LISTEN, EC_SINK, EC_SOURCE,
+                    MIC_CHUNK, MIC_RATE, EchoCancel, Microphone, Speaker, tone)
 from .claude import ClaudeError, ClaudeSession
 from .log import log
 from .share import MicSharing
@@ -28,11 +38,35 @@ STOP = re.compile(r"^\W*((please|hey|okay|ok|jarvis|claude)\W+)*"
 STOP_END_CHUNKS = 5    # 0.4 s of quiet ends a possible stop command
 STOP_MAX_CHUNKS = 25   # 2 s; anything longer isn't one
 RESET = re.compile(r"\b(new conversation|start over|start a new (chat|conversation)|fresh start|clear (the )?(chat|conversation))\b", re.I)
-FILLERS = ["One sec.", "Let me check.", "One moment."]
+FILLERS = ["One sec.", "Let me look.", "Hang on."]
+SLOW_TOOLS = ("WebSearch", "WebFetch", "look", "Bash")
+CHIME_TIMER = tone([784, 988, 1175, 988, 1175], ms=110, volume=0.3)
 
 
 def rms(chunk):
     return float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2))) if len(chunk) else 0.0
+
+
+def _words(s):
+    return re.findall(r"[a-z']+", s.lower())
+
+
+def sounds_like_echo(heard, spoken):
+    """Is what the mic heard just talk2's own recent sentences coming back?
+
+    An echo is a run of its own words in the same order. Short replies are
+    treated as you, since answers reuse the question's words ("the short one").
+    """
+    import difflib
+    h = _words(heard)
+    if not h:
+        return True
+    said = _words(" ".join(spoken))
+    if not said or len(h) <= 3:
+        return False
+    m = difflib.SequenceMatcher(None, h, said, autojunk=False)
+    matched = sum(b.size for b in m.get_matching_blocks())
+    return matched / len(h) >= 0.7
 
 
 class Endpointer:
@@ -60,7 +94,7 @@ class Endpointer:
         """Returns int16 audio of one utterance, or None if nobody spoke."""
         thr = self.threshold()
         chunks = list(preroll)
-        started = False
+        started = bool(preroll)
         voiced = silent = 0
         waited = 0
         start_chunks = int(start_timeout_s / CHUNK_S)
@@ -89,7 +123,7 @@ class Endpointer:
                 silent += 1
             if silent >= self.end_chunks or len(chunks) >= self.max_chunks:
                 break
-        if voiced < 3:
+        if voiced < 3 and not preroll:
             return None
         return np.concatenate(chunks[:len(chunks) - max(0, silent - 3)])
 
@@ -99,19 +133,39 @@ class Assistant:
         self.cfg = cfg or config.load()
         c = self.cfg
         models = config.MODELS_DIR
+        from .api import Api, Panel, Timers
         from .stt import Transcriber
         from .tts import load_voice
-        from .wakeword import WakeWord
-        self.wake = WakeWord(os.path.join(models, "wakeword"), c["wake_word"], c["wake_threshold"])
+        from .wakeword import PersonalModel, WakeDetector, WakeWord
         self.stt = Transcriber(c["speech_model"], os.path.join(models, "whisper"), c["threads"])
+        personal = None
+        ppath = os.path.join(models, "wakeword", "personal.npz")
+        if os.path.exists(ppath):
+            try:
+                personal = PersonalModel.load(ppath)
+                log("using your personal wake word model")
+            except Exception as e:
+                log(f"personal wake model unreadable: {e}")
+        self.wake = WakeDetector(
+            WakeWord(os.path.join(models, "wakeword"), c["wake_word"]),
+            confirm=self.stt.says_wake_word if c["wake_confirm"] else None,
+            personal=personal, low=c["wake_sensitivity"], high=c["wake_threshold"])
         self.voice = load_voice(c, models)
         self.speaker = Speaker(c["speaker_device"], c["volume"])
         self.mic = Microphone(c["mic_device"])
+        self.echo = EchoCancel()
+        self.aec = False
+        self.panel, self.timers = Panel(), Timers()
+        self.api = Api(self.panel, self.timers, actions.open_panel_window)
         self.claude = ClaudeSession(model=c["claude_model"], allow_commands=c["allow_commands"],
-                                    make_tools=c["make_tools"], extra_prompt=c["extra_instructions"])
+                                    make_tools=c["make_tools"], extra_prompt=c["extra_instructions"],
+                                    mcp_env={"TALK2_API_PORT": str(self.api.port),
+                                             "TALK2_API_TOKEN": self.api.token})
         self.ep = Endpointer(c["end_silence_ms"], c["max_question_s"])
         self.share = MicSharing(own_pids=self.mic.pids)
+        self.learner = memory.Learner(c)
         self.filler_i = 0
+        self.last_battery_warn = 101
 
     # -- helpers -----------------------------------------------------------
     def chime(self, sound):
@@ -134,34 +188,76 @@ class Assistant:
         # Let `talk2 stop` run cleanup (un-muting other apps' mic) instead of dying mid-question.
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         self.share.restore_after_crash()
+        if self.cfg["echo_cancel"] and not self.cfg["mic_device"] and not self.cfg["speaker_device"]:
+            self.aec = self.echo.start()
+            if self.aec:
+                self.mic.device, self.speaker.device = EC_SOURCE, EC_SINK
         self.mic.start()
         try:
             self.claude.start()
         except ClaudeError as e:
             log(str(e))
         log(f"listening for the wake word ({self.cfg['wake_word']})")
-        while True:
-            chunk = self.mic.read(timeout=1.0)
-            self._maybe_reset_conversation()
-            if chunk is None:
-                continue
-            self.ep.observe_idle(chunk)
-            if self.wake.process(chunk):
-                log(f"wake word ({self.wake.last_score:.2f})")
-                try:
-                    self.converse()
-                except Exception as e:  # keep the service alive no matter what
-                    log(f"conversation error: {e!r}")
-                    self.speaker.stop()
-                self.wake.reset()
-                self.mic.flush()
+        try:
+            while True:
+                chunk = self.mic.read(timeout=1.0)
+                self._maybe_reset_conversation()
+                self._announce_due()
+                if chunk is None:
+                    continue
+                self.ep.observe_idle(chunk)
+                if self.wake.process(chunk):
+                    log(f"wake word ({self.wake.last})")
+                    try:
+                        self.converse()
+                    except Exception as e:  # keep the service alive no matter what
+                        log(f"conversation error: {e!r}")
+                        self.speaker.stop()
+                    self.learner.end_conversation()
+                    self.wake.reset()
+                    self.mic.flush()
+        finally:
+            self.echo.stop()
 
     def _maybe_reset_conversation(self):
         idle_min = self.cfg["new_conversation_after_min"]
         s = self.claude
         if idle_min and s.proc and s.turns and not s.busy and time.time() - s.last_used > idle_min * 60:
             log("starting a fresh conversation after being idle")
-            s.restart()
+            s.restart()   # also picks up what it learned since
+
+    def _announce_due(self):
+        """Say timers and reminders that came due, and warn about a low battery."""
+        said = False
+        while True:
+            try:
+                item = self.timers.due.get_nowait()
+            except queue.Empty:
+                break
+            label = item["label"]
+            if item.get("late", 0) > 120:
+                msg = f"Sorry, I missed a reminder while I was off: {label}." if label else "You had a timer go off while I was off."
+            elif label and label != "timer":
+                msg = f"Hey, reminder: {label}." if not label.lower().endswith("timer") else f"Your {label}'s done."
+            else:
+                msg = "Hey, your timer's done."
+            self.chime(CHIME_TIMER)
+            self.say(msg)
+            said = True
+        if said:
+            self.mic.flush()
+        if int(time.time()) % 60 == 0 and self.cfg["battery_warnings"]:
+            b = context.battery()
+            if b and b["status"] == "discharging":
+                for level in (20, 10, 5):
+                    if b["percent"] <= level < self.last_battery_warn:
+                        self.last_battery_warn = level
+                        left = b.get("minutes_left")
+                        self.say(f"Heads up, battery's at {b['percent']} percent" +
+                                 (f", about {left} minutes left." if left else "."))
+                        break
+            elif b and b["status"] != "discharging":
+                self.last_battery_warn = 101
 
     def converse(self):
         """One exchange, plus follow-ups. Other apps' mic access is untouched
@@ -183,165 +279,307 @@ class Assistant:
         # say next is probably meant for your friends, not Claude.
         return not self.share.shared()
 
+    def _barge_in_allowed(self):
+        if not self.cfg["barge_in"]:
+            return False
+        # Friends' voices on Discord come out of the speakers too; don't let them interrupt.
+        return self.cfg["keep_questions_private"] or not self.share.shared()
+
     def _converse(self):
         self.speaker.stop()
+        g = None
+        try:
+            g = context.running_game()
+        except Exception:
+            pass
+        self.stt.set_vocabulary([g[1]] if g else [])
         # No flush here: people often say the question in the same breath as
         # the wake word, and that audio is already queued.
         self.chime(CHIME_LISTEN)
         audio = self.ep.record(self.read_mic, start_timeout_s=5)
         replied = False
+        text = None
+        note = ""
         while True:
             # Once there's been a reply, every way out ends the "call".
             leaving = CHIME_END if replied else CHIME_CANCEL
-            if audio is None:
-                self.chime(leaving)
-                return
-            self.chime(CHIME_DONE)
-            text = self.stt.transcribe(audio)
+            if text is None:
+                if audio is None:
+                    self.chime(leaving)
+                    return
+                self.chime(CHIME_DONE)
+                text = self.stt.transcribe(audio)
             if not text or CANCEL.match(text):
                 self.chime(leaving)
                 return
+            self.learner.before_question(text)
             if RESET.search(text) and len(text.split()) <= 6:
+                self.learner.end_conversation()
                 self.claude.restart()
                 self.say("Okay, fresh start.")
                 if replied:
                     self.chime(CHIME_END)
                 return
-            interrupted = self.respond(text)
+            if self.cfg["quick_commands"]:
+                t0 = time.time()
+                try:
+                    said = quick.handle(self, text)
+                except Exception as e:
+                    log(f"quick command failed: {e!r}")
+                    said = None
+                if said:
+                    log(f"instant: {text!r} -> {said!r} ({(time.time() - t0) * 1000:.0f} ms)")
+                    self.say(said)
+                    self.learner.record(text, said, kind="instant", game=g and g[1])
+                    replied = True
+                    text, note = None, ""
+                    if not self._follow_up_allowed():
+                        self.chime(CHIME_END)
+                        return
+                    self.mic.flush()
+                    audio = self.ep.record(self.read_mic, start_timeout_s=self.cfg["follow_up_s"])
+                    continue
+            kind, data = self.respond(text, note, game=g)
             replied = True
-            if interrupted == "stopped":
+            text, note = None, ""
+            if kind == "stopped":
                 self.chime(CHIME_END)
                 return
-            if not interrupted:
-                self.mic.flush()  # don't hear the end of our own reply as a follow-up
-            if interrupted:
+            if kind == "barge":
+                text, note = data["text"], data["note"]
+                continue
+            if kind == "wake":
                 self.chime(CHIME_LISTEN)
                 audio = self.ep.record(self.read_mic, start_timeout_s=5)
                 continue
+            self.mic.flush()  # don't hear the end of our own reply as a follow-up
             if not self._follow_up_allowed():
                 self.chime(CHIME_END)
                 return
             audio = self.ep.record(self.read_mic, start_timeout_s=self.cfg["follow_up_s"])
 
-    def respond(self, text):
-        """Stream Claude's reply into speech.
+    # -- one reply -----------------------------------------------------------
+    def _context_line(self, game):
+        extra = []
+        if self.panel.content.get("visible"):
+            extra.append(f"Panel showing: {self.panel.content.get('title') or 'untitled'}")
+        timers = self.timers.list()
+        if timers:
+            from .api import describe_timer
+            extra.append("Timers: " + "; ".join(describe_timer(i) for i in timers[:3]))
+        try:
+            return context.summary(extra)
+        except Exception as e:
+            log(f"context failed: {e}")
+            return time.strftime("Local time: %A %-I:%M %p")
 
-        Returns True if the wake word interrupted it, "stopped" if a stop
-        command did, and False if it finished.
+    def respond(self, text, note="", game=None):
+        """Stream Claude's reply into speech, listening the whole time.
+
+        Returns (kind, data): ("done", None), ("stopped", None) for a stop
+        command, ("wake", None) for the wake word, or ("barge", {...}) when you
+        talked over it.
         """
-        interrupted = threading.Event()
-        stopped = threading.Event()
-        done_streaming = threading.Event()
-        sentences = queue.Queue()
-        self.speaker.resume()
+        cfg = self.cfg
+        outcome = {}                     # set once: kind, data
+        decided = threading.Event()
+        cv = threading.Condition()
+        pending = collections.deque()    # sentences not yet played
+        timeline = []                    # (sentence, start, end) as played
+        state = {"paused": False, "finished": False, "phrase": False, "spoken": [], "all": []}
+        synth_cache = {}
+        barge = self._barge_in_allowed()
+        t0 = time.time()
+
+        def decide(kind, data=None):
+            with cv:
+                if decided.is_set():
+                    return
+                outcome.update(kind=kind, data=data)
+                decided.set()
+                cv.notify_all()
+            self.speaker.stop()
+
+        def pause():
+            with cv:
+                if state["paused"]:
+                    return
+                state["paused"] = True
+            t = time.time()
+            self.speaker.stop()
+            with cv:
+                replay = [s for s, st, en in timeline if en > t]
+                state["spoken"] += [s for s, st, en in timeline if en <= t]
+                # The sentence it was in the middle of, for "you were cut off while saying".
+                state["partial"] = next((s for s, st, en in timeline if st <= t < en), "")
+                timeline.clear()
+                pending.extendleft(reversed(replay))
+            log(f"paused for you ({len(replay)} sentence(s) to resume)")
+
+        def resume():
+            self.speaker.resume()
+            with cv:
+                state["paused"] = False
+                cv.notify_all()
+            log("resuming")
 
         def speak_worker():
-            voice_started = False
+            started = False
             while True:
-                s = sentences.get()
-                if s is None or interrupted.is_set():
-                    return
+                with cv:
+                    while not decided.is_set() and (state["paused"] or not pending) and not (
+                            state["finished"] and not pending):
+                        cv.wait(0.1)
+                    if decided.is_set() or (state["finished"] and not pending):
+                        return
+                    s = pending.popleft()
                 try:
-                    audio, sr = self.voice.synth(s)
+                    audio, sr = synth_cache.get(s) or self.voice.synth(s)
+                    synth_cache[s] = (audio, sr)
                 except Exception as e:
                     log(f"voice failed on {s!r}: {e}")
                     continue
-                if not interrupted.is_set():
-                    if not voice_started:
-                        log(f"voice started after {time.time() - t0:.1f}s")
-                        voice_started = True
-                    self.speaker.play(audio, sr)
+                with cv:
+                    if decided.is_set():
+                        return
+                    if state["paused"]:
+                        pending.appendleft(s)
+                        continue
+                    start = max(time.time(), self.speaker.ends_at)
+                    timeline.append((s, start, start + len(audio) / sr))
+                if not started:
+                    log(f"voice started after {time.time() - t0:.1f}s")
+                    started = True
+                self.speaker.play(audio, sr)
 
-        stop_barge_in = threading.Event()
+        stop_listening = threading.Event()
 
-        phrases = queue.Queue()
-
-        def barge_in_worker():
+        def listen_worker():
+            """Wake word, stop words and talking over the reply."""
             self.wake.reset()
-            self.mic.flush()
-            thr = self.ep.threshold()
-            before, phrase, quiet = None, [], 0
-            while not stop_barge_in.is_set():
+            base_thr = self.ep.threshold()
+            echo = 0.0
+            before = collections.deque(maxlen=4)
+            phrase, quiet, onset = [], 0, 0
+            end_chunks = self.ep.end_chunks if barge else STOP_END_CHUNKS
+            max_chunks = int(15 / CHUNK_S) if barge else STOP_MAX_CHUNKS
+            while not stop_listening.is_set() and not decided.is_set():
                 c = self.mic.read(timeout=0.1)
                 if c is None:
                     continue
-                if self.cfg["interrupt_with_wake_word"] and self.wake.process(c):
+                if cfg["interrupt_with_wake_word"] and self.wake.process(c):
                     log("interrupted by wake word")
-                    interrupted.set()
-                    self.speaker.stop()
+                    decide("wake")
                     return
-                if not self.cfg["stop_words"]:
+                if not (barge or cfg["stop_words"]):
                     continue
-                # Transcribing takes a while, so collect short phrases here and
-                # leave the wake word running.
-                loud = rms(c) > thr
-                if phrase or loud:
-                    if not phrase and before is not None:
-                        phrase.append(before)
-                    phrase.append(c)
-                    quiet = 0 if loud else quiet + 1
-                    if quiet >= STOP_END_CHUNKS or len(phrase) >= STOP_MAX_CHUNKS:
-                        phrases.put(np.concatenate(phrase))
-                        phrase, quiet = [], 0
-                before = c
-
-        def stop_word_worker():
-            while True:
-                audio = phrases.get()
-                if audio is None or stop_barge_in.is_set():
-                    return
-                if STOP.match(self.stt.transcribe(audio)):
+                level = rms(c)
+                if not phrase:
+                    playing = self.speaker.playing()
+                    # How loud talk2's own voice is in the mic (low with echo cancellation).
+                    if playing and level < base_thr * 4:
+                        echo = 0.9 * echo + 0.1 * level
+                    thr = base_thr * (1.4 if playing else 1.0)
+                    if not self.aec and playing:
+                        thr = max(thr, echo * 3.0)
+                    before.append(c)
+                    onset = onset + 1 if level > thr else 0
+                    if onset >= 2:
+                        phrase, quiet, onset = list(before), 0, 0
+                        state["phrase"] = True
+                        if barge:
+                            pause()
+                    continue
+                phrase.append(c)
+                quiet = 0 if level > base_thr else quiet + 1
+                if quiet < end_chunks and len(phrase) < max_chunks:
+                    continue
+                audio = np.concatenate(phrase)
+                phrase = []
+                heard = self.stt.transcribe(audio) if len(audio) > 0.35 * MIC_RATE else ""
+                with cv:
+                    recent = state["spoken"][-3:] + [s for s, _, _ in timeline] + list(pending)[:2]
+                state["phrase"] = False
+                if STOP.match(heard) or (barge and CANCEL.match(heard)):
                     log("stopped by voice")
-                    stopped.set()
-                    interrupted.set()
-                    self.speaker.stop()
+                    decide("stopped")
                     return
+                if not heard or sounds_like_echo(heard, recent) or not barge:
+                    if heard and barge:
+                        log(f"ignored (echo or noise): {heard!r}")
+                    if state["paused"]:
+                        resume()
+                    continue
+                log(f"you cut in: {heard!r}")
+                said = " ".join(state["spoken"] + ([state["partial"] + " ..."] if state.get("partial") else []))
+                unsaid = " ".join(list(pending) + [s for s, _, _ in timeline])
+                asked = "?" in (said + " " + unsaid)
+                if said:
+                    n = f"(You were cut off while saying: \"{said[-300:]}\". The user talked over you" + (
+                        "; they probably already knew what you were asking.)" if asked else ".)")
+                else:
+                    n = "(The user cut in before you started talking.)"
+                decide("barge", {"text": heard, "note": n, "asked": asked})
+                return
 
-        t0 = time.time()
         speaker_thread = threading.Thread(target=speak_worker, daemon=True)
+        listener = threading.Thread(target=listen_worker, daemon=True)
         speaker_thread.start()
-        barge_in = threading.Thread(target=barge_in_worker, daemon=True)
-        stop_words = threading.Thread(target=stop_word_worker, daemon=True)
-        if self.cfg["interrupt_with_wake_word"] or self.cfg["stop_words"]:
-            barge_in.start()
-        if self.cfg["stop_words"]:
-            stop_words.start()
+        self.mic.flush()
+        listener.start()
 
         ss = SentenceStream()
         spoken_any = False
-        stamped = f"(Local time: {time.strftime('%A %-I:%M %p')})\n{text}"
+        reply_text, tools = [], []
+        prompt = f"[{self._context_line(game)}]\n" + (note + "\n" if note else "") + text
+
+        def add(s):
+            with cv:
+                pending.append(s)
+                state["all"].append(s)
+                cv.notify_all()
+
         try:
-            for kind, val in self.claude.ask(stamped, cancelled=interrupted.is_set):
+            for kind, val in self.claude.ask(prompt, cancelled=decided.is_set):
                 if kind == "text":
+                    reply_text.append(val)
                     for s in ss.feed(val):
                         if not spoken_any:
                             log(f"first words after {time.time() - t0:.1f}s")
                         spoken_any = True
-                        sentences.put(s)
-                elif kind == "tool" and not spoken_any:
-                    sentences.put(FILLERS[self.filler_i % len(FILLERS)])
-                    self.filler_i += 1
-                    spoken_any = True
-            for s in ss.flush():
-                sentences.put(s)
+                        add(s)
+                elif kind == "tool":
+                    tools.append(val)
+                    if not spoken_any and any(k in val for k in SLOW_TOOLS):
+                        add(FILLERS[self.filler_i % len(FILLERS)])
+                        self.filler_i += 1
+                        spoken_any = True
+            if not decided.is_set():
+                for s in ss.flush():
+                    add(s)
         except ClaudeError as e:
-            sentences.put(str(e))
+            add(str(e))
         finally:
-            sentences.put(None)
-            done_streaming.set()
-        while speaker_thread.is_alive() and not interrupted.is_set():
-            speaker_thread.join(0.05)
-        self.speaker.wait(cancelled=interrupted.is_set)
-        stop_barge_in.set()
-        phrases.put(None)
-        if barge_in.is_alive():
-            barge_in.join()  # only one reader of the mic at a time
-        if stop_words.is_alive():
-            stop_words.join()  # and one user of the transcriber
+            with cv:
+                state["finished"] = True
+                cv.notify_all()
+
+        # Wait for the reply to finish playing, or for you to cut in.
+        while not decided.is_set():
+            idle = (not speaker_thread.is_alive() and not self.speaker.playing()
+                    and not state["paused"] and not (barge and state["phrase"]))
+            if idle:
+                break
+            time.sleep(0.03)
+        stop_listening.set()
+        listener.join()          # only one reader of the mic at a time
+        speaker_thread.join(1.0)
         self.wake.reset()
-        if interrupted.is_set():
-            self.speaker.stop()
-            self.speaker.resume()
-        if stopped.is_set():
-            return "stopped"
-        return interrupted.is_set()
+        self.speaker.resume()
+
+        kind = outcome.get("kind", "done")
+        learned = {"done": None, "stopped": "stopped", "wake": "cut off",
+                   "barge": None if (outcome.get("data") or {}).get("asked") else "cut off"}[kind]
+        self.learner.record(text, "".join(reply_text).strip(), tools, outcome=learned,
+                            game=game and game[1])
+        return kind, outcome.get("data")

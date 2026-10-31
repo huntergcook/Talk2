@@ -10,6 +10,10 @@
   mic-test         show live mic level and wake word score for 15 seconds
   mic-users        list other apps using the mic
   unmute           un-mute other apps' mic streams talk2 muted (run on service stop)
+  enroll           teach the wake word your voice (about a minute)
+  memory [clear]   show (or clear) what talk2 has learned about you
+  look-test        take a screenshot the way the look tool does
+  context          what talk2 would tell Claude about the headset right now
 """
 
 import json
@@ -108,6 +112,35 @@ def main(argv):
         others = other_mic_streams()
         print("\n".join(f"{name}{' (muted)' if m else ''}" for _, name, m in others)
               or "No other app is using the mic.")
+
+    elif cmd == "enroll":
+        from . import enroll
+        return enroll.run(cfg)
+
+    elif cmd == "memory":
+        from . import memory
+        if rest[:1] == ["clear"]:
+            import os
+            try:
+                os.remove(memory.MEMORY_PATH)
+            except OSError:
+                pass
+            print("Cleared what talk2 learned. (The conversation log in history.jsonl is kept.)")
+        else:
+            print(memory.load() or "Nothing learned yet. It builds up as you use talk2.")
+            print(f"\n({memory.MEMORY_PATH})")
+
+    elif cmd == "look-test":
+        from . import actions
+        try:
+            print("saved", actions.look(cfg))
+        except actions.ActionError as e:
+            print(e)
+            return 1
+
+    elif cmd == "context":
+        from . import context
+        print(context.summary())
 
     elif cmd == "settings":
         print(json.dumps(cfg, indent=2))
