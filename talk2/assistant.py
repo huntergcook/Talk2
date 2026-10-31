@@ -11,7 +11,7 @@ import time
 import numpy as np
 
 from . import config
-from .audio import CHIME_CANCEL, CHIME_DONE, CHIME_LISTEN, MIC_CHUNK, MIC_RATE, Microphone, Speaker
+from .audio import CHIME_CANCEL, CHIME_DONE, CHIME_END, CHIME_LISTEN, MIC_CHUNK, MIC_RATE, Microphone, Speaker
 from .claude import ClaudeError, ClaudeSession
 from .log import log
 from .share import MicSharing
@@ -19,7 +19,14 @@ from .speech_text import SentenceStream
 
 CHUNK_S = MIC_CHUNK / MIC_RATE
 
-CANCEL = re.compile(r"^\W*(never ?mind|cancel|nothing|stop|forget it|no thanks?)\W*$", re.I)
+CANCEL = re.compile(r"^\W*(never ?mind|cancel|nothing|stop|shut up|forget it|no thanks?)\W*$", re.I)
+# The whole utterance must be a stop command, so talking about stopping doesn't count.
+STOP = re.compile(r"^\W*((please|hey|okay|ok|jarvis|claude)\W+)*"
+                  r"(stop( talking| it| that)?|shut up|shut it|be quiet|quiet|hush|enough|that's enough|"
+                  r"never ?mind|cancel)"
+                  r"(\W+(please|now|jarvis|claude))*\W*$", re.I)
+STOP_END_CHUNKS = 5    # 0.4 s of quiet ends a possible stop command
+STOP_MAX_CHUNKS = 25   # 2 s; anything longer isn't one
 RESET = re.compile(r"\b(new conversation|start over|start a new (chat|conversation)|fresh start|clear (the )?(chat|conversation))\b", re.I)
 FILLERS = ["One sec.", "Let me check.", "One moment."]
 
@@ -101,7 +108,7 @@ class Assistant:
         self.speaker = Speaker(c["speaker_device"], c["volume"])
         self.mic = Microphone(c["mic_device"])
         self.claude = ClaudeSession(model=c["claude_model"], allow_commands=c["allow_commands"],
-                                    extra_prompt=c["extra_instructions"])
+                                    make_tools=c["make_tools"], extra_prompt=c["extra_instructions"])
         self.ep = Endpointer(c["end_silence_ms"], c["max_question_s"])
         self.share = MicSharing(own_pids=self.mic.pids)
         self.filler_i = 0
@@ -182,20 +189,29 @@ class Assistant:
         # the wake word, and that audio is already queued.
         self.chime(CHIME_LISTEN)
         audio = self.ep.record(self.read_mic, start_timeout_s=5)
+        replied = False
         while True:
+            # Once there's been a reply, every way out ends the "call".
+            leaving = CHIME_END if replied else CHIME_CANCEL
             if audio is None:
-                self.chime(CHIME_CANCEL)
+                self.chime(leaving)
                 return
             self.chime(CHIME_DONE)
             text = self.stt.transcribe(audio)
             if not text or CANCEL.match(text):
-                self.chime(CHIME_CANCEL)
+                self.chime(leaving)
                 return
             if RESET.search(text) and len(text.split()) <= 6:
                 self.claude.restart()
                 self.say("Okay, fresh start.")
+                if replied:
+                    self.chime(CHIME_END)
                 return
             interrupted = self.respond(text)
+            replied = True
+            if interrupted == "stopped":
+                self.chime(CHIME_END)
+                return
             if not interrupted:
                 self.mic.flush()  # don't hear the end of our own reply as a follow-up
             if interrupted:
@@ -203,19 +219,24 @@ class Assistant:
                 audio = self.ep.record(self.read_mic, start_timeout_s=5)
                 continue
             if not self._follow_up_allowed():
+                self.chime(CHIME_END)
                 return
             audio = self.ep.record(self.read_mic, start_timeout_s=self.cfg["follow_up_s"])
-            if audio is None:
-                return  # no follow-up: back to waiting quietly
 
     def respond(self, text):
-        """Stream Claude's reply into speech. Returns True if interrupted."""
+        """Stream Claude's reply into speech.
+
+        Returns True if the wake word interrupted it, "stopped" if a stop
+        command did, and False if it finished.
+        """
         interrupted = threading.Event()
+        stopped = threading.Event()
         done_streaming = threading.Event()
         sentences = queue.Queue()
         self.speaker.resume()
 
         def speak_worker():
+            voice_started = False
             while True:
                 s = sentences.get()
                 if s is None or interrupted.is_set():
@@ -226,30 +247,68 @@ class Assistant:
                     log(f"voice failed on {s!r}: {e}")
                     continue
                 if not interrupted.is_set():
+                    if not voice_started:
+                        log(f"voice started after {time.time() - t0:.1f}s")
+                        voice_started = True
                     self.speaker.play(audio, sr)
 
         stop_barge_in = threading.Event()
 
+        phrases = queue.Queue()
+
         def barge_in_worker():
             self.wake.reset()
             self.mic.flush()
+            thr = self.ep.threshold()
+            before, phrase, quiet = None, [], 0
             while not stop_barge_in.is_set():
                 c = self.mic.read(timeout=0.1)
-                if c is not None and self.wake.process(c):
+                if c is None:
+                    continue
+                if self.cfg["interrupt_with_wake_word"] and self.wake.process(c):
                     log("interrupted by wake word")
                     interrupted.set()
                     self.speaker.stop()
                     return
+                if not self.cfg["stop_words"]:
+                    continue
+                # Transcribing takes a while, so collect short phrases here and
+                # leave the wake word running.
+                loud = rms(c) > thr
+                if phrase or loud:
+                    if not phrase and before is not None:
+                        phrase.append(before)
+                    phrase.append(c)
+                    quiet = 0 if loud else quiet + 1
+                    if quiet >= STOP_END_CHUNKS or len(phrase) >= STOP_MAX_CHUNKS:
+                        phrases.put(np.concatenate(phrase))
+                        phrase, quiet = [], 0
+                before = c
 
+        def stop_word_worker():
+            while True:
+                audio = phrases.get()
+                if audio is None or stop_barge_in.is_set():
+                    return
+                if STOP.match(self.stt.transcribe(audio)):
+                    log("stopped by voice")
+                    stopped.set()
+                    interrupted.set()
+                    self.speaker.stop()
+                    return
+
+        t0 = time.time()
         speaker_thread = threading.Thread(target=speak_worker, daemon=True)
         speaker_thread.start()
         barge_in = threading.Thread(target=barge_in_worker, daemon=True)
-        if self.cfg["interrupt_with_wake_word"]:
+        stop_words = threading.Thread(target=stop_word_worker, daemon=True)
+        if self.cfg["interrupt_with_wake_word"] or self.cfg["stop_words"]:
             barge_in.start()
+        if self.cfg["stop_words"]:
+            stop_words.start()
 
         ss = SentenceStream()
         spoken_any = False
-        t0 = time.time()
         stamped = f"(Local time: {time.strftime('%A %-I:%M %p')})\n{text}"
         try:
             for kind, val in self.claude.ask(stamped, cancelled=interrupted.is_set):
@@ -274,10 +333,15 @@ class Assistant:
             speaker_thread.join(0.05)
         self.speaker.wait(cancelled=interrupted.is_set)
         stop_barge_in.set()
+        phrases.put(None)
         if barge_in.is_alive():
             barge_in.join()  # only one reader of the mic at a time
+        if stop_words.is_alive():
+            stop_words.join()  # and one user of the transcriber
         self.wake.reset()
         if interrupted.is_set():
             self.speaker.stop()
             self.speaker.resume()
+        if stopped.is_set():
+            return "stopped"
         return interrupted.is_set()

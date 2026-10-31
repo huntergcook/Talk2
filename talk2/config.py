@@ -5,12 +5,14 @@ CONFIG_DIR = os.path.expanduser("~/.config/talk2")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "settings.json")
 DATA_DIR = os.path.expanduser("~/.local/share/talk2")
 MODELS_DIR = os.path.join(DATA_DIR, "models")
+TOOLS_DIR = os.path.join(DATA_DIR, "tools")
 
 DEFAULTS = {
     # Wake word
     "wake_word": "hey_jarvis_v0.1",   # openWakeWord model name, or a path to a custom .onnx
     "wake_threshold": 0.5,           # 0..1; raise if it triggers by itself, lower if it misses you
     "interrupt_with_wake_word": True,  # say the wake word while Claude talks to cut it off
+    "stop_words": True,              # say "stop" or "shut up" while Claude talks to end the reply
     # Listening
     "mic_device": "",                # blank = system default (the Frame's mic)
     "end_silence_ms": 800,           # pause length that ends your question
@@ -23,12 +25,15 @@ DEFAULTS = {
     # Claude
     "claude_model": "sonnet",        # sonnet, haiku, opus, or a full model name; blank = your default
     "allow_commands": False,         # let Claude run commands and edit files on the headset
+    "make_tools": False,             # let Claude write and run Python scripts in its toolbox folder
     "new_conversation_after_min": 15,
     "extra_instructions": "",
     # Voice
     "voice_engine": "kokoro",        # kokoro (natural) or piper (faster, more robotic)
     "voice": "af_heart",             # Kokoro voice, see `talk2 voices`
     "voice_speed": 1.05,
+    "voice_model": "kokoro-v1.0.int8.onnx",  # twice as fast; kokoro-v1.0.onnx is the full model
+    "voice_effect": "none",          # none, or robot for a deep metallic voice
     "piper_voice": "en_US-amy-medium",
     "volume": 0.9,
     "chimes": True,

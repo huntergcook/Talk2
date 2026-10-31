@@ -21,7 +21,7 @@ Listen to the voices: [docs/voice-samples.mp3](docs/voice-samples.mp3) (Heart, B
 
 3. When asked, sign in to Claude in the browser window that opens.
 
-That's it. It takes a few minutes and about 700 MB, everything stays in your home folder, and talk2 starts on its own from then on. Run the same command again to update.
+That's it. It takes a few minutes and about 1 GB, everything stays in your home folder, and talk2 starts on its own from then on. Run the same command again to update.
 
 ## Using it
 
@@ -31,12 +31,15 @@ That's it. It takes a few minutes and about 700 MB, everything stays in your hom
 | "Hey Jarvis, what's a good build for a stealth archer?" | One breath works too |
 | A follow-up within 5 seconds of the reply | No wake word needed |
 | "Hey Jarvis" while Claude is talking | Cuts it off and listens again |
+| "Stop" or "shut up" while Claude is talking | Ends the reply |
 | "Never mind" | Cancels |
 | "New conversation" | Claude forgets the chat so far |
 
-A falling chime means it heard you and is thinking. A low chime means it didn't catch anything.
+A falling chime means it heard you and is thinking. A low chime means it didn't catch anything. Three slow falling notes mean the conversation is over, and you'll need "Hey Jarvis" again.
 
 Claude can search the web and read files on the headset. Running commands or changing files is off by default, since a misheard word shouldn't run anything; turn it on with `talk2 set allow_commands true`.
+
+With `talk2 set make_tools true`, Claude writes small Python scripts for things like weather and sums, keeps them in `~/.local/share/talk2/tools`, and reuses them. It can only write inside that folder and only run scripts from it, but those scripts are ordinary programs that run as you, with no sandbox.
 
 ## Discord and PC streaming
 
@@ -63,12 +66,16 @@ talk2 settings                    # everything else
 |---|---|---|
 | `voice` | `af_heart` | Kokoro voice. `a`/`b` = American/British, `f`/`m` = female/male |
 | `voice_speed` | `1.05` | 0.8 to 1.4 |
+| `voice_model` | `kokoro-v1.0.int8.onnx` | Twice as fast as the full model, `kokoro-v1.0.onnx` |
+| `voice_effect` | `none` | `robot` for a deep, metallic voice; try it with `am_onyx` |
 | `wake_threshold` | `0.5` | Higher = fewer false wakes, lower = easier to wake |
 | `follow_up_s` | `5` | Seconds to keep listening after a reply (0 = always need the wake word) |
 | `end_silence_ms` | `800` | How long a pause ends your question |
 | `speech_model` | `base.en` | Speech recognition: `tiny.en` (fastest) … `small.en` (most accurate) |
 | `claude_model` | `sonnet` | `haiku`, `sonnet`, `opus`, or blank for your account default |
 | `allow_commands` | `false` | Let Claude run commands and edit files on the headset |
+| `make_tools` | `false` | Let Claude write and run Python scripts in its toolbox folder |
+| `stop_words` | `true` | Say "stop" or "shut up" while Claude talks to end the reply |
 | `follow_up_when_shared` | `false` | Allow follow-ups without the wake word while another app (like Discord over PC streaming) uses the mic |
 | `keep_questions_private` | `false` | Mute the mic for other apps from "Hey Jarvis" until the reply ends |
 | `threads` | `4` | CPU threads for speech; lower it if a game stutters |

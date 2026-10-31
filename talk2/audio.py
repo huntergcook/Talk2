@@ -224,3 +224,4 @@ def tone(freqs, ms=90, rate=24000, volume=0.25):
 CHIME_LISTEN = tone([660, 990])      # rising: I'm listening
 CHIME_DONE = tone([880, 660], ms=70)  # falling: got it
 CHIME_CANCEL = tone([440, 330], ms=110)
+CHIME_END = tone([660, 495, 330], ms=130)  # slow fall: the conversation is over

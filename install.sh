@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/huntergcook/Talk2/main/install.sh | bash
 #
 # Everything goes in your home folder (SteamOS's system files stay untouched):
-#   ~/.local/share/talk2   app, Python environment and models (~700 MB)
+#   ~/.local/share/talk2   app, Python environment and models (~1 GB)
 #   ~/.config/talk2        settings.json
 #   ~/.local/bin/talk2     the `talk2` command
 # Running it again updates talk2 and keeps your settings.
@@ -26,6 +26,8 @@ say()  { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m  %s\n' "$*"; }
 die()  { printf '\033[1;31mxx\033[0m  %s\n' "$*"; exit 1; }
 fetch() { curl -fL --retry 3 --progress-bar -o "$2.part" "$1" && mv "$2.part" "$2"; }
+# Desktop Mode's nested session moves XDG_RUNTIME_DIR, hiding the user systemd.
+usystemctl() { XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user "$@"; }
 
 [ "$(uname -s)" = Linux ] || die "talk2 runs on the Steam Frame (Linux)."
 command -v curl >/dev/null || die "curl is missing."
@@ -67,6 +69,7 @@ get() { [ -s "$2" ] || { echo "  $(basename "$2")"; [ -n "$DRY" ] && : > "$2" ||
 for f in melspectrogram.onnx embedding_model.onnx hey_jarvis_v0.1.onnx; do
   get "$OWW/$f" "$MODELS/wakeword/$f"
 done
+get "$KOK/kokoro-v1.0.int8.onnx" "$MODELS/kokoro/kokoro-v1.0.int8.onnx"
 get "$KOK/kokoro-v1.0.onnx" "$MODELS/kokoro/kokoro-v1.0.onnx"
 get "$KOK/voices-v1.0.bin"  "$MODELS/kokoro/voices-v1.0.bin"
 SPEECH_MODEL="$(PYTHONPATH="$APP" "$VENV/bin/python" -c 'from talk2 import config; print(config.load()["speech_model"])')"
@@ -113,9 +116,9 @@ install -m 755 "$APP/talk2.sh" "$BIN/talk2"
 install -m 644 "$APP/talk2.service" "$UNIT_DIR/talk2.service"
 PYTHONPATH="$APP" "$VENV/bin/python" -c 'from talk2 import config; config.ensure_file()'
 if [ -z "$DRY" ]; then
-  systemctl --user daemon-reload
-  systemctl --user enable talk2.service >/dev/null 2>&1
-  systemctl --user restart talk2.service
+  usystemctl daemon-reload
+  usystemctl enable talk2.service >/dev/null 2>&1
+  usystemctl restart talk2.service
 fi
 
 cat <<EOF

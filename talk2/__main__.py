@@ -52,6 +52,7 @@ def main(argv):
         from .speech_text import SentenceStream
         v, sp = _voice(cfg), _speaker(cfg)
         s = ClaudeSession(model=cfg["claude_model"], allow_commands=cfg["allow_commands"],
+                          make_tools=cfg["make_tools"],
                           extra_prompt=cfg["extra_instructions"])
         ss = SentenceStream()
         for kind, val in s.ask(" ".join(rest)):

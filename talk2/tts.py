@@ -13,7 +13,7 @@ class KokoroVoice:
     name = "kokoro"
 
     def __init__(self, models_dir, voice="af_heart", speed=1.0, threads=4,
-                 model_file="kokoro-v1.0.onnx"):
+                 model_file="kokoro-v1.0.int8.onnx"):
         import onnxruntime as rt
         from kokoro_onnx import Kokoro
         model = os.path.join(models_dir, model_file)
@@ -57,6 +57,48 @@ class PiperVoice:
         return audio.astype(np.float32), chunks[0].sample_rate if chunks else 22050
 
 
+ROBOT_PITCH = 2 ** (4 / 12)   # 4 semitones down
+ROBOT_COMB_S = 0.007          # the metal resonance
+ROBOT_COMB_GAIN = 0.55
+ROBOT_RING_HZ = 50            # the mechanical buzz
+ROBOT_RING_MIX = 0.3
+
+
+def robotize(audio, sr):
+    """Deep, metallic robot voice. Same sample rate, ROBOT_PITCH times longer."""
+    n = len(audio)
+    if n < 2:
+        return audio
+    # Stretch rather than change the rate: the speaker reopens on a new rate,
+    # which would cut off a chime.
+    out = np.interp(np.arange(int(n * ROBOT_PITCH)) / ROBOT_PITCH, np.arange(n), audio)
+    delay = int(ROBOT_COMB_S * sr)
+    for i in range(delay, len(out), delay):
+        block = out[i:i + delay]
+        block += ROBOT_COMB_GAIN * out[i - delay:i - delay + len(block)]
+    ring = np.sin(2 * np.pi * ROBOT_RING_HZ * np.arange(len(out)) / sr)
+    out = (1 - ROBOT_RING_MIX) * out + ROBOT_RING_MIX * out * ring
+    out = np.tanh(2 * out)
+    return (0.95 * out / max(float(np.abs(out).max()), 1e-6)).astype(np.float32)
+
+
+class RobotVoice:
+    """Wraps a voice engine and runs its speech through robotize()."""
+
+    def __init__(self, voice):
+        self.v = voice
+        self.name = voice.name
+        if hasattr(voice, "speed"):
+            voice.speed *= ROBOT_PITCH  # the stretch slows speech; keep the pace
+
+    def voices(self):
+        return self.v.voices()
+
+    def synth(self, text):
+        audio, sr = self.v.synth(text)
+        return robotize(audio, sr), sr
+
+
 def load_voice(cfg, models_dir):
     """Load the configured engine, falling back to the other one."""
     order = ["kokoro", "piper"] if cfg["voice_engine"] != "piper" else ["piper", "kokoro"]
@@ -65,9 +107,11 @@ def load_voice(cfg, models_dir):
             t = time.time()
             if engine == "kokoro":
                 v = KokoroVoice(os.path.join(models_dir, "kokoro"), cfg["voice"],
-                                cfg["voice_speed"], cfg["threads"])
+                                cfg["voice_speed"], cfg["threads"], cfg["voice_model"])
             else:
                 v = PiperVoice(os.path.join(models_dir, "piper"), cfg["piper_voice"])
+            if cfg["voice_effect"] == "robot":
+                v = RobotVoice(v)
             audio, sr = v.synth("Ready.")  # warm up so the first reply isn't slow
             log(f"voice ready ({engine}, {time.time() - t:.1f}s)")
             return v
