@@ -368,7 +368,8 @@ def capture_screen(cfg=None):
     if shutil.which("gamescopectl"):
         # Sees Desktop Mode too: its nested session is a window inside gamescope.
         tried.append("gamescopectl")
-        genv = dict(os.environ)
+        # Desktop Mode's nested session moves XDG_RUNTIME_DIR, hiding gamescope's socket.
+        genv = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{os.getuid()}")
         genv.setdefault("GAMESCOPE_WAYLAND_DISPLAY", "gamescope-0")
         run(["gamescopectl", "screenshot", out], env=genv, timeout=5)
         for _ in range(20):
