@@ -41,11 +41,17 @@ def _record_cmds(device):
 def _play_cmds(rate, device):
     pulse_dev = [f"--device={device}"] if device else []
     pw_dev = ["--target", device] if device else []
+    pw_props = _PW_PROPS
+    if device == EC_SINK:
+        # SteamOS reroutes output streams through its spatializer, straight to the
+        # speaker. A name it skips keeps the voice going through the echo canceller.
+        pulse_dev += [f"--property=node.name={EC_PLAY_NODE}"]
+        pw_props = ["-P", f"{{ application.name = \"talk2\" node.name = \"{EC_PLAY_NODE}\" }}"]
     return [
         ["pacat", "--playback", "--raw", "--format=s16le", f"--rate={rate}", "--channels=1",
          "--latency-msec=60", f"--client-name={APP_NAME}", *pulse_dev],
         ["pw-play", "--raw", "--rate", str(rate), "--channels", "1", "--format", "s16",
-         "--latency", "60ms", *_PW_PROPS, *pw_dev, "-"],
+         "--latency", "60ms", *pw_props, *pw_dev, "-"],
     ]
 
 
@@ -230,6 +236,7 @@ CHIME_END = tone([660, 495, 330], ms=130)  # slow fall: the conversation is over
 # -- echo cancellation -----------------------------------------------------------
 EC_SOURCE = "talk2_mic"   # the mic with talk2's own voice removed
 EC_SINK = "talk2_out"     # where talk2 plays, so the canceller knows what to remove
+EC_PLAY_NODE = "talk2.pw-audio-namespace"
 
 
 class EchoCancel:
