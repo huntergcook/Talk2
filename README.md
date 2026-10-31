@@ -141,7 +141,7 @@ talk2 settings                    # everything else
 - **It doesn't wake up.** Run `talk2 enroll`. If it still misses you, run `talk2 mic-test`: the level bar should move when you talk. If it doesn't, the Frame's mic isn't the default input; pick it in the sound settings.
 - **It wakes up by itself.** `talk2 set wake_sensitivity 0.25`, or `talk2 enroll` again so it knows your voice better.
 - **It keeps pausing mid-reply.** Game sounds are being heard as you. Try `talk2 set barge_in false`; "stop" and "Hey Claude" still work.
-- **"What's this?" can't see.** Run `talk2 look-test`. In Desktop Mode it uses Spectacle. In Game Mode it asks gamescope for a screenshot. If neither works, set `screenshot_command` to anything that saves a PNG to `{out}`.
+- **"What's this?" can't see.** Run `talk2 look-test`. It uses Spectacle or grim if they're installed, and otherwise asks gamescope for a screenshot. If none of those work, set `screenshot_command` to anything that saves a PNG to `{out}`.
 - **Friends on Discord can't hear you.** Run `talk2 unmute` (it un-mutes anything talk2 muted), then `talk2 mic-users`; the PC streaming app should be listed without "(muted)".
 - **talk2 hears nothing while streaming from the PC.** If `talk2 log` says the mic sent only silence, the streaming app has the mic to itself; please open an issue with `talk2 mic-users` output.
 - **"Claude isn't signed in."** Run `talk2 login`.

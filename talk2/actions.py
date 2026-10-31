@@ -365,6 +365,17 @@ def capture_screen(cfg=None):
         run(["grim", out], env=env, timeout=8)
         if os.path.exists(out):
             return out
+    if shutil.which("gamescopectl"):
+        # Sees Desktop Mode too: its nested session is a window inside gamescope.
+        tried.append("gamescopectl")
+        genv = dict(os.environ)
+        genv.setdefault("GAMESCOPE_WAYLAND_DISPLAY", "gamescope-0")
+        run(["gamescopectl", "screenshot", out], env=genv, timeout=5)
+        for _ in range(20):
+            time.sleep(0.1)
+            if os.path.exists(out):
+                time.sleep(0.2)   # let it finish writing
+                return out
     if shutil.which("xprop"):
         # Game Mode: gamescope saves a screenshot when this root window property is set.
         tried.append("gamescope")
